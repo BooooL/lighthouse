@@ -1,4 +1,4 @@
-use crate::arena_backing::ArenaBacking;
+use crate::arena_backing::{AnonMmap, ArenaBacking};
 use crate::{Hash256, SmallVec8};
 use ssz_derive::{Decode, Encode};
 use std::cmp::Ordering;
@@ -12,7 +12,8 @@ pub enum Error {
     RangeOverFlow,
 }
 
-pub type CacheArena = GenericCacheArena<Vec<Hash256>>;
+pub type CacheArena = GenericCacheArena<AnonMmap>;
+// pub type CacheArena = GenericCacheArena<Vec<u8>>;
 
 /// Inspired by the `TypedArena` crate, the `CachedArena` provides a single contiguous memory
 /// allocation from which smaller allocations can be produced. In effect this allows for having
