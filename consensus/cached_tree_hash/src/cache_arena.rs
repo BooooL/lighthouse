@@ -86,11 +86,11 @@ impl<B: ArenaBacking> GenericCacheArena<B> {
     /// To reiterate, the given `range` should be relative to the given `alloc_id`, not
     /// `self.backing`. E.g., if the allocation has an offset of `20` and the range is `0..1`, then
     /// the splice will translate to `self.backing[20..21]`.
-    fn splice_forgetful<I: IntoIterator<Item = Hash256>>(
+    fn splice_forgetful(
         &mut self,
         alloc_id: usize,
         range: Range<usize>,
-        replace_with: I,
+        replace_with: &[Hash256],
     ) -> Result<(), Error> {
         let offset = self
             .offsets
@@ -212,7 +212,7 @@ impl CacheArenaAllocation {
         vec: SmallVec8<Hash256>,
     ) -> Result<(), Error> {
         let len = arena.len(self.alloc_id)?;
-        arena.splice_forgetful(self.alloc_id, len..len, vec)?;
+        arena.splice_forgetful(self.alloc_id, len..len, &vec)?;
         Ok(())
     }
 
@@ -221,7 +221,7 @@ impl CacheArenaAllocation {
     /// An error is returned if this allocation is not known to the given `arena`.
     pub fn push(&self, arena: &mut CacheArena, item: Hash256) -> Result<(), Error> {
         let len = arena.len(self.alloc_id)?;
-        arena.splice_forgetful(self.alloc_id, len..len, vec![item])?;
+        arena.splice_forgetful(self.alloc_id, len..len, &[item])?;
         Ok(())
     }
 
