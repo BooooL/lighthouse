@@ -1,3 +1,4 @@
+use crate::arena_backing::ArenaBacking;
 use crate::SmallVec8;
 use ssz::{Decode, Encode};
 use ssz_derive::{Decode, Encode};
@@ -13,6 +14,8 @@ pub enum Error {
     RangeOverFlow,
 }
 
+pub type CacheArena<T> = GenericCacheArena<T, Vec<T>>;
+
 /// Inspired by the `TypedArena` crate, the `CachedArena` provides a single contiguous memory
 /// allocation from which smaller allocations can be produced. In effect this allows for having
 /// many `Vec<T>`-like objects all stored contiguously on the heap with the aim of reducing memory
@@ -21,19 +24,23 @@ pub enum Error {
 /// Because all of the allocations are stored in one big `Vec`, resizing any of the allocations
 /// will mean all items to the right of that allocation will be moved.
 #[derive(Debug, PartialEq, Clone, Default, Encode, Decode)]
-pub struct CacheArena<T: Encode + Decode> {
+pub struct GenericCacheArena<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> {
     /// The backing array, storing cached values.
-    backing: Vec<T>,
+    backing: B,
     /// A list of offsets indicating the start of each allocation.
     offsets: Vec<usize>,
+    #[ssz(skip_serializing)]
+    #[ssz(skip_deserializing)]
+    _phantom: PhantomData<T>,
 }
 
-impl<T: Encode + Decode> CacheArena<T> {
+impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena<T, B> {
     /// Instantiate self with a backing array of the given `capacity`.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            backing: Vec::with_capacity(capacity),
+            backing: B::with_capacity(capacity),
             offsets: vec![],
+            _phantom: <_>::default(),
         }
     }
 
@@ -106,7 +113,7 @@ impl<T: Encode + Decode> CacheArena<T> {
 
         let prev_len = self.backing.len();
 
-        self.backing.splice(start..end, replace_with);
+        self.backing.splice_forgetful(start..end, replace_with);
 
         match prev_len.cmp(&self.backing.len()) {
             Ordering::Greater => self.shrink(alloc_id, prev_len - self.backing.len())?,
@@ -175,13 +182,13 @@ impl<T: Encode + Decode> CacheArena<T> {
 
     /// Iterate through all values in some allocation.
     fn iter(&self, alloc_id: usize) -> Result<impl Iterator<Item = &T>, Error> {
-        Ok(self.backing[self.range(alloc_id)?].iter())
+        Ok(self.backing.iter_range(self.range(alloc_id)?))
     }
 
     /// Mutably iterate through all values in some allocation.
     fn iter_mut(&mut self, alloc_id: usize) -> Result<impl Iterator<Item = &mut T>, Error> {
         let range = self.range(alloc_id)?;
-        Ok(self.backing[range].iter_mut())
+        Ok(self.backing.iter_range_mut(range))
     }
 
     /// Returns the total number of items stored in the arena, the sum of all values in all

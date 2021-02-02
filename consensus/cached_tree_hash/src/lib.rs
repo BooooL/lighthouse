@@ -1,3 +1,4 @@
+mod arena_backing;
 mod cache;
 mod cache_arena;
 mod impls;
