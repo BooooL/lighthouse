@@ -1,9 +1,7 @@
 use crate::arena_backing::ArenaBacking;
-use crate::SmallVec8;
-use ssz::{Decode, Encode};
+use crate::{Hash256, SmallVec8};
 use ssz_derive::{Decode, Encode};
 use std::cmp::Ordering;
-use std::marker::PhantomData;
 use std::ops::Range;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -14,7 +12,7 @@ pub enum Error {
     RangeOverFlow,
 }
 
-pub type CacheArena<T> = GenericCacheArena<T, Vec<T>>;
+pub type CacheArena = GenericCacheArena<Vec<Hash256>>;
 
 /// Inspired by the `TypedArena` crate, the `CachedArena` provides a single contiguous memory
 /// allocation from which smaller allocations can be produced. In effect this allows for having
@@ -24,35 +22,28 @@ pub type CacheArena<T> = GenericCacheArena<T, Vec<T>>;
 /// Because all of the allocations are stored in one big `Vec`, resizing any of the allocations
 /// will mean all items to the right of that allocation will be moved.
 #[derive(Debug, PartialEq, Clone, Default, Encode, Decode)]
-pub struct GenericCacheArena<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> {
+pub struct GenericCacheArena<B: ArenaBacking> {
     /// The backing array, storing cached values.
     backing: B,
     /// A list of offsets indicating the start of each allocation.
     offsets: Vec<usize>,
-    #[ssz(skip_serializing)]
-    #[ssz(skip_deserializing)]
-    _phantom: PhantomData<T>,
 }
 
-impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena<T, B> {
+impl<B: ArenaBacking> GenericCacheArena<B> {
     /// Instantiate self with a backing array of the given `capacity`.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             backing: B::with_capacity(capacity),
             offsets: vec![],
-            _phantom: <_>::default(),
         }
     }
 
     /// Produce an allocation of zero length at the end of the backing array.
-    pub fn alloc(&mut self) -> CacheArenaAllocation<T> {
+    pub fn alloc(&mut self) -> CacheArenaAllocation {
         let alloc_id = self.offsets.len();
         self.offsets.push(self.backing.len());
 
-        CacheArenaAllocation {
-            alloc_id,
-            _phantom: PhantomData,
-        }
+        CacheArenaAllocation { alloc_id }
     }
 
     /// Update `self.offsets` to reflect an allocation increasing in size.
@@ -95,15 +86,16 @@ impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena
     /// To reiterate, the given `range` should be relative to the given `alloc_id`, not
     /// `self.backing`. E.g., if the allocation has an offset of `20` and the range is `0..1`, then
     /// the splice will translate to `self.backing[20..21]`.
-    fn splice_forgetful<I: IntoIterator<Item = T>>(
+    fn splice_forgetful<I: IntoIterator<Item = Hash256>>(
         &mut self,
         alloc_id: usize,
         range: Range<usize>,
         replace_with: I,
     ) -> Result<(), Error> {
-        let offset = *self
+        let offset = self
             .offsets
             .get(alloc_id)
+            .copied()
             .ok_or(Error::UnknownAllocId(alloc_id))?;
         let start = range
             .start
@@ -140,7 +132,7 @@ impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena
     }
 
     /// Get the value at position `i`, relative to the offset at `alloc_id`.
-    fn get(&self, alloc_id: usize, i: usize) -> Result<Option<&T>, Error> {
+    fn get(&self, alloc_id: usize, i: usize) -> Result<Option<Hash256>, Error> {
         if i < self.len(alloc_id)? {
             let offset = self
                 .offsets
@@ -153,7 +145,7 @@ impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena
     }
 
     /// Mutably get the value at position `i`, relative to the offset at `alloc_id`.
-    fn get_mut(&mut self, alloc_id: usize, i: usize) -> Result<Option<&mut T>, Error> {
+    fn get_mut(&mut self, alloc_id: usize, i: usize) -> Result<Option<&mut [u8]>, Error> {
         if i < self.len(alloc_id)? {
             let offset = self
                 .offsets
@@ -167,9 +159,10 @@ impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena
 
     /// Returns the range in `self.backing` that is occupied by some allocation.
     fn range(&self, alloc_id: usize) -> Result<Range<usize>, Error> {
-        let start = *self
+        let start = self
             .offsets
             .get(alloc_id)
+            .copied()
             .ok_or(Error::UnknownAllocId(alloc_id))?;
         let end = self
             .offsets
@@ -181,12 +174,12 @@ impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena
     }
 
     /// Iterate through all values in some allocation.
-    fn iter(&self, alloc_id: usize) -> Result<impl Iterator<Item = &T>, Error> {
+    fn iter(&self, alloc_id: usize) -> Result<impl Iterator<Item = Hash256> + '_, Error> {
         Ok(self.backing.iter_range(self.range(alloc_id)?))
     }
 
     /// Mutably iterate through all values in some allocation.
-    fn iter_mut(&mut self, alloc_id: usize) -> Result<impl Iterator<Item = &mut T>, Error> {
+    fn iter_mut(&mut self, alloc_id: usize) -> Result<impl Iterator<Item = &mut [u8]>, Error> {
         let range = self.range(alloc_id)?;
         Ok(self.backing.iter_range_mut(range))
     }
@@ -207,19 +200,16 @@ impl<T: Encode + Decode, B: ArenaBacking<T> + Encode + Decode> GenericCacheArena
 /// that created `Self`. I.e., do not mix-and-match allocations and arenas unless you _really_ know
 /// what you're doing (or want to have a bad time).
 #[derive(Debug, PartialEq, Clone, Default, Encode, Decode)]
-pub struct CacheArenaAllocation<T> {
+pub struct CacheArenaAllocation {
     alloc_id: usize,
-    #[ssz(skip_serializing)]
-    #[ssz(skip_deserializing)]
-    _phantom: PhantomData<T>,
 }
 
-impl<T: Encode + Decode> CacheArenaAllocation<T> {
+impl CacheArenaAllocation {
     /// Grow the allocation in `arena`, appending `vec` to the current values.
     pub fn extend_with_vec(
         &self,
-        arena: &mut CacheArena<T>,
-        vec: SmallVec8<T>,
+        arena: &mut CacheArena,
+        vec: SmallVec8<Hash256>,
     ) -> Result<(), Error> {
         let len = arena.len(self.alloc_id)?;
         arena.splice_forgetful(self.alloc_id, len..len, vec)?;
@@ -229,7 +219,7 @@ impl<T: Encode + Decode> CacheArenaAllocation<T> {
     /// Push `item` to the end of the current allocation in `arena`.
     ///
     /// An error is returned if this allocation is not known to the given `arena`.
-    pub fn push(&self, arena: &mut CacheArena<T>, item: T) -> Result<(), Error> {
+    pub fn push(&self, arena: &mut CacheArena, item: Hash256) -> Result<(), Error> {
         let len = arena.len(self.alloc_id)?;
         arena.splice_forgetful(self.alloc_id, len..len, vec![item])?;
         Ok(())
@@ -238,7 +228,7 @@ impl<T: Encode + Decode> CacheArenaAllocation<T> {
     /// Get the i'th item in the `arena` (relative to this allocation).
     ///
     /// An error is returned if this allocation is not known to the given `arena`.
-    pub fn get<'a>(&self, arena: &'a CacheArena<T>, i: usize) -> Result<Option<&'a T>, Error> {
+    pub fn get(&self, arena: &CacheArena, i: usize) -> Result<Option<Hash256>, Error> {
         arena.get(self.alloc_id, i)
     }
 
@@ -247,43 +237,44 @@ impl<T: Encode + Decode> CacheArenaAllocation<T> {
     /// An error is returned if this allocation is not known to the given `arena`.
     pub fn get_mut<'a>(
         &self,
-        arena: &'a mut CacheArena<T>,
+        arena: &'a mut CacheArena,
         i: usize,
-    ) -> Result<Option<&'a mut T>, Error> {
+    ) -> Result<Option<&'a mut [u8]>, Error> {
         arena.get_mut(self.alloc_id, i)
     }
 
     /// Iterate through all items in the `arena` (relative to this allocation).
-    pub fn iter<'a>(&self, arena: &'a CacheArena<T>) -> Result<impl Iterator<Item = &'a T>, Error> {
+    pub fn iter<'a>(
+        &self,
+        arena: &'a CacheArena,
+    ) -> Result<impl Iterator<Item = Hash256> + 'a, Error> {
         arena.iter(self.alloc_id)
     }
 
     /// Mutably iterate through all items in the `arena` (relative to this allocation).
     pub fn iter_mut<'a>(
         &self,
-        arena: &'a mut CacheArena<T>,
-    ) -> Result<impl Iterator<Item = &'a mut T>, Error> {
+        arena: &'a mut CacheArena,
+    ) -> Result<impl Iterator<Item = &'a mut [u8]>, Error> {
         arena.iter_mut(self.alloc_id)
     }
 
     /// Return the number of items stored in this allocation.
-    pub fn len(&self, arena: &CacheArena<T>) -> Result<usize, Error> {
+    pub fn len(&self, arena: &CacheArena) -> Result<usize, Error> {
         arena.len(self.alloc_id)
     }
 
     /// Returns true if this allocation is empty.
-    pub fn is_empty(&self, arena: &CacheArena<T>) -> Result<bool, Error> {
+    pub fn is_empty(&self, arena: &CacheArena) -> Result<bool, Error> {
         self.len(arena).map(|len| len == 0)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::Hash256;
     use smallvec::smallvec;
-
-    type CacheArena = super::CacheArena<Hash256>;
-    type CacheArenaAllocation = super::CacheArenaAllocation<Hash256>;
 
     fn hash(i: usize) -> Hash256 {
         Hash256::from_low_u64_be(i as u64)
@@ -331,17 +322,16 @@ mod tests {
         let collected = sub
             .iter(arena)
             .expect("should get iter")
-            .cloned()
             .collect::<Vec<_>>();
         let collected_mut = sub
             .iter_mut(arena)
             .expect("should get mut iter")
-            .map(|v| *v)
+            .map(|slice| Hash256::from_slice(slice))
             .collect::<Vec<_>>();
 
         for i in 0..len {
             assert_eq!(
-                *sub.get(arena, i)
+                sub.get(arena, i)
                     .expect("should exist")
                     .expect("should get sub index"),
                 hash(i),

@@ -7,10 +7,10 @@ mod test;
 use smallvec::SmallVec;
 
 type SmallVec8<T> = SmallVec<[T; 8]>;
-pub type CacheArena = cache_arena::CacheArena<Hash256>;
 
 pub use crate::cache::TreeHashCache;
 pub use crate::impls::int_log;
+pub use cache_arena::CacheArena;
 use ethereum_types::H256 as Hash256;
 use tree_hash::TreeHash;
 

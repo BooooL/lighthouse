@@ -1,13 +1,10 @@
-use crate::cache_arena;
+use crate::cache_arena::{CacheArena, CacheArenaAllocation};
 use crate::SmallVec8;
 use crate::{Error, Hash256};
 use eth2_hashing::{hash32_concat, ZERO_HASHES};
 use smallvec::smallvec;
 use ssz_derive::{Decode, Encode};
 use tree_hash::BYTES_PER_CHUNK;
-
-type CacheArena = cache_arena::CacheArena<Hash256>;
-type CacheArenaAllocation = cache_arena::CacheArenaAllocation<Hash256>;
 
 /// Sparse Merkle tree suitable for tree hashing vectors and lists.
 #[derive(Debug, PartialEq, Clone, Default, Encode, Decode)]
@@ -78,8 +75,8 @@ impl TreeHashCache {
             .enumerate()
             .zip(&mut leaves)
             .for_each(|((i, leaf), new_leaf)| {
-                if !self.initialized || leaf.as_bytes() != new_leaf {
-                    leaf.assign_from_slice(&new_leaf);
+                if !self.initialized || leaf != new_leaf {
+                    leaf.copy_from_slice(&new_leaf);
                     dirty.push(i);
                 }
             });
@@ -118,14 +115,13 @@ impl TreeHashCache {
                     .ok_or(Error::MissingLeftIdx(left_idx))?;
                 let right = self.layers[depth]
                     .get(arena, right_idx)?
-                    .copied()
                     .unwrap_or_else(|| Hash256::from_slice(&ZERO_HASHES[self.depth - depth]));
 
                 let new_hash = hash32_concat(left.as_bytes(), right.as_bytes());
 
                 match self.layers[depth - 1].get_mut(arena, idx)? {
                     Some(hash) => {
-                        hash.assign_from_slice(&new_hash);
+                        hash.copy_from_slice(&new_hash);
                     }
                     None => {
                         // Parent layer should already contain nodes for all non-dirty indices
@@ -151,7 +147,6 @@ impl TreeHashCache {
         self.layers[0]
             .get(arena, 0)
             .expect("cached tree should have a root layer")
-            .copied()
             .unwrap_or_else(|| Hash256::from_slice(&ZERO_HASHES[self.depth]))
     }
 
