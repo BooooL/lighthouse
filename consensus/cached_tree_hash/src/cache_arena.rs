@@ -13,7 +13,7 @@ pub enum Error {
 }
 
 pub type CacheArena = GenericCacheArena<AnonMmap>;
-// pub type CacheArena = GenericCacheArena<Vec<u8>>;
+// pub type CacheArena = GenericCacheArena<Vec<Hash256>>;
 
 /// Inspired by the `TypedArena` crate, the `CachedArena` provides a single contiguous memory
 /// allocation from which smaller allocations can be produced. In effect this allows for having
@@ -189,6 +189,10 @@ impl<B: ArenaBacking> GenericCacheArena<B> {
     /// allocations.
     pub fn backing_len(&self) -> usize {
         self.backing.len()
+    }
+
+    pub fn extend_capacity(&mut self, capacity: usize) {
+        self.backing.extend_capacity(capacity)
     }
 }
 

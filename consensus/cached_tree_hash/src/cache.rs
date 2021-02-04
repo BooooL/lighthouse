@@ -24,6 +24,7 @@ impl TreeHashCache {
     /// leaves are set to `Hash256::zero()`.
     pub fn new(arena: &mut CacheArena, depth: usize, leaves: usize) -> Self {
         let mut layers = SmallVec8::with_capacity(depth + 1);
+        arena.extend_capacity(non_empty_nodes(depth, leaves));
 
         for i in 0..=depth {
             let vec = arena.alloc();
@@ -66,6 +67,8 @@ impl TreeHashCache {
         } else if new_leaf_count > 2usize.pow(self.depth as u32) {
             return Err(Error::TooManyLeaves);
         }
+
+        arena.extend_capacity(non_empty_nodes(self.depth, new_leaf_count));
 
         let mut dirty = SmallVec8::new();
 
@@ -193,6 +196,29 @@ fn nodes_per_layer(layer: usize, depth: usize, leaves: usize) -> usize {
         let leaves_per_node = 1 << (depth - layer);
         (leaves + leaves_per_node - 1) / leaves_per_node
     }
+}
+
+fn non_empty_nodes(depth: usize, non_empty_leaves: usize) -> usize {
+    let total_leaves = 1_usize << depth;
+    let mut n = total_leaves
+        .checked_sub(non_empty_leaves)
+        .expect("leaves cannot fit in tree");
+    let mut empty_nodes = 0;
+
+    // It would be nice if this were constant-time.
+    loop {
+        empty_nodes += n;
+
+        if n < 2 {
+            break;
+        }
+
+        n /= 2
+    }
+
+    let total_nodes = (2 * total_leaves) - 1;
+
+    total_nodes - empty_nodes
 }
 
 #[cfg(test)]

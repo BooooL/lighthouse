@@ -47,7 +47,7 @@ impl CachedTreeHash<TreeHashCache> for Validator {
 fn process_field_by_index(
     v: &Validator,
     field_idx: usize,
-    leaf: &mut Hash256,
+    leaf: &mut [u8],
     force_update: bool,
 ) -> bool {
     match field_idx {
@@ -66,34 +66,30 @@ fn process_field_by_index(
     }
 }
 
-fn process_pubkey_bytes_field(
-    val: &PublicKeyBytes,
-    leaf: &mut Hash256,
-    force_update: bool,
-) -> bool {
+fn process_pubkey_bytes_field(val: &PublicKeyBytes, leaf: &mut [u8], force_update: bool) -> bool {
     let new_tree_hash = merkle_root(val.as_serialized(), 0);
     process_slice_field(new_tree_hash.as_bytes(), leaf, force_update)
 }
 
-fn process_slice_field(new_tree_hash: &[u8], leaf: &mut Hash256, force_update: bool) -> bool {
-    if force_update || leaf.as_bytes() != new_tree_hash {
-        leaf.assign_from_slice(&new_tree_hash);
+fn process_slice_field(new_tree_hash: &[u8], leaf: &mut [u8], force_update: bool) -> bool {
+    if force_update || leaf != new_tree_hash {
+        leaf[..].copy_from_slice(&new_tree_hash);
         true
     } else {
         false
     }
 }
 
-fn process_u64_field(val: u64, leaf: &mut Hash256, force_update: bool) -> bool {
+fn process_u64_field(val: u64, leaf: &mut [u8], force_update: bool) -> bool {
     let new_tree_hash = int_to_fixed_bytes32(val);
     process_slice_field(&new_tree_hash[..], leaf, force_update)
 }
 
-fn process_epoch_field(val: Epoch, leaf: &mut Hash256, force_update: bool) -> bool {
+fn process_epoch_field(val: Epoch, leaf: &mut [u8], force_update: bool) -> bool {
     process_u64_field(val.as_u64(), leaf, force_update)
 }
 
-fn process_bool_field(val: bool, leaf: &mut Hash256, force_update: bool) -> bool {
+fn process_bool_field(val: bool, leaf: &mut [u8], force_update: bool) -> bool {
     process_u64_field(val as u64, leaf, force_update)
 }
 
